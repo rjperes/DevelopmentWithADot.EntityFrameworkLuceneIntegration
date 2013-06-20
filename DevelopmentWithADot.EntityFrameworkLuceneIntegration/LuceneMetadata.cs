@@ -159,6 +159,16 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 			{
 				yield return (new ValidationResult("Fields cannot be empty", new String[] { "Properties" }));
 			}
+
+			foreach (KeyValuePair<PropertyInfo, FieldAttribute> field in this.Fields)
+			{
+				Type fieldType = field.Key.PropertyType;
+
+				if ((fieldType.IsClass == true) && (fieldType != typeof(String)))
+				{
+					yield return (new ValidationResult(String.Format("Field of type {0} cannot be indexed. Can only index primitive types and strings", fieldType), new String[] { "Properties" }));
+				}
+			}
 		}
 
 		#endregion

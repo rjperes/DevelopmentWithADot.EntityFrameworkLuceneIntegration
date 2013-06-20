@@ -15,6 +15,12 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 			this.OmitNorms = false;
 		}
 
+		public Int32 PrecisionStep
+		{
+			get;
+			set;
+		}
+
 		public Single Boost
 		{
 			get;

@@ -426,7 +426,7 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 						foreach (var f in metadata.NumericFields)
 						{
 							Object value = f.Key.GetValue(entity, null);
-							NumericField field = new NumericField(f.Key.Name, 0, this.getStore(f.Value.Store), f.Value.Index);
+							NumericField field = new NumericField(f.Key.Name, f.Value.PrecisionStep, this.getStore(f.Value.Store), f.Value.Index);
 
 							if ((value is Int32) || (value is Int16) || (value is Byte))
 							{
