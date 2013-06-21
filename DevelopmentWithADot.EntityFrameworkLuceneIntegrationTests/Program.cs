@@ -1,4 +1,6 @@
-﻿using System.Linq;
+﻿using System;
+using System.Globalization;
+using System.Linq;
 using DevelopmentWithADot.EntityFrameworkLuceneIntegration;
 
 namespace DevelopmentWithADot.EntityFrameworkLuceneIntegrationTests
@@ -9,11 +11,10 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegrationTests
 		{
 			using (TestContext ctx = new TestContext())
 			{
-				/*ctx.Orders.DeleteIndex();
+				ctx.Orders.DeleteIndex();
 				ctx.Products.DeleteIndex();
 				ctx.Orders.Index();
-				ctx.Products.Index();*/
-
+				ctx.Products.Index();
 
 				var allProducts = ctx.Products.ToList();
 				var allOrders = ctx.Orders.ToList();
@@ -25,7 +26,8 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegrationTests
 				var productsStartingWithSome = ctx.Search<Product>(x => x.Name.StartsWith("Some")).ToList();
 				var productsContainsOne = ctx.Search<Product>(x => x.Name.Contains("One")).ToList();
 
-				var ordersWithTotalCostEqualTo200 = ctx.Search<Order>(x => x.TotalCost == 200).ToList();
+				var ordersWithTotalCostEqualTo200 = ctx.Search<Order>("TotalCost:200").ToList();
+				var orders = ctx.Search<Order>("Date:20120608").ToList();
 			}
 		}
 	}

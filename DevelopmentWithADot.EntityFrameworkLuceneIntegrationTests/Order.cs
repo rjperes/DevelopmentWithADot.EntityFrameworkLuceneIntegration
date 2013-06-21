@@ -10,7 +10,7 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegrationTests
 	[Document]
 	public class Order
 	{
-		[Field]
+		[Field(Format = "yyyyMMdd")]
 		public DateTime Date
 		{
 			get;
@@ -40,7 +40,7 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegrationTests
 			set;
 		}
 
-		[Field]
+		[Field(Format = "0")]
 		public Double TotalCost
 		{
 			get
