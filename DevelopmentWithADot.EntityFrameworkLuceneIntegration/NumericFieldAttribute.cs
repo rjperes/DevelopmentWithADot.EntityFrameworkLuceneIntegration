@@ -9,9 +9,16 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 		public NumericFieldAttribute()
 		{
 			this.PrecisionStep = Lucene.Net.Util.NumericUtils.PRECISION_STEP_DEFAULT;
+			this.Index = true;
 		}
 
 		public Int32 PrecisionStep
+		{
+			get;
+			set;
+		}
+
+		public new Boolean Index
 		{
 			get;
 			set;

@@ -25,7 +25,7 @@ using Lucene.Net.Store;
 
 namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 {
-	public abstract class IndexedDbContext : DbContext
+	public abstract class IndexedDbContext : DbContext, ILuceneContext
 	{
 		#region Private static readonly fields
 		private static readonly MethodInfo takeMethod = typeof(Queryable).GetMethod("Take", BindingFlags.Public | BindingFlags.Static);
@@ -177,63 +177,29 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 		#endregion
 
 		#region Public methods
-		public void Index<T>(T entity, Boolean destroyExistingIndex = false) where T : class
+		public void Index(Object entity, Boolean destroyExistingIndex = false)
 		{
-			DbEntityEntry entry = this.ChangeTracker.Entries<T>().Where(x => Object.Equals(x.Entity, entity)).SingleOrDefault();
+			DbEntityEntry entry = this.ChangeTracker.Entries<Object>().Where(x => Object.Equals(x.Entity, entity)).SingleOrDefault();
 
 			if (entry == null)
 			{
-				this.Index<T>(entity, EntityState.Added, destroyExistingIndex);
+				this.index(entity, EntityState.Added, destroyExistingIndex);
 			}
-			else
+			else if (entry.State == EntityState.Modified)
 			{
-				if (entry.State == EntityState.Modified)
-				{
-					this.Index<T>(entity, EntityState.Modified, destroyExistingIndex);
-				}
-				else if (entry.State == EntityState.Deleted)
-				{
-					this.Index<T>(entity, EntityState.Deleted, destroyExistingIndex);
-				}
-				else if (entry.State == EntityState.Unchanged)
-				{
-					this.Index<T>(entity, EntityState.Unchanged, destroyExistingIndex);
-				}
-				else if (entry.State == EntityState.Detached)
-				{
-					this.Index<T>(entity, EntityState.Detached, destroyExistingIndex);
-				}
+				this.index(entity, EntityState.Modified, destroyExistingIndex);
 			}
-		}
-
-		public void Index<T>(T entity, EntityState state, Boolean destroyExistingIndex = false) where T : class
-		{
-			Type entityType = this.getEntityType(entity.GetType());
-
-			switch (state)
+			else if (entry.State == EntityState.Deleted)
 			{
-				case EntityState.Added:
-					this.add(entityType, destroyExistingIndex, entity);
-					break;
-
-				case EntityState.Deleted:
-					this.delete(entityType, destroyExistingIndex, entity);
-					break;
-
-				case EntityState.Modified:
-					this.update(entityType, destroyExistingIndex, entity);
-					break;
-
-				case EntityState.Unchanged:
-					this.add(entityType, destroyExistingIndex, entity);
-					break;
-
-				case EntityState.Detached:
-					this.add(entityType, destroyExistingIndex, entity);
-					break;
-
-				default:
-					throw (new ArgumentException("Invalid state", "state"));
+				this.index(entity, EntityState.Deleted, destroyExistingIndex);
+			}
+			else if (entry.State == EntityState.Unchanged)
+			{
+				this.index(entity, EntityState.Unchanged, destroyExistingIndex);
+			}
+			else if (entry.State == EntityState.Detached)
+			{
+				this.index(entity, EntityState.Detached, destroyExistingIndex);
 			}
 		}
 
@@ -247,6 +213,7 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 			String queryString = condition.Body.ToString();
 			queryString = queryString.Replace(" OrElse ", " OR ");
 			queryString = queryString.Replace(" AndAlso ", " AND ");
+			queryString = queryString.Replace(".ToString()", String.Empty);
 			queryString = Regex.Replace(queryString, @"(?<name>\w+)\s==\snull", "-${name}:[* TO *]");
 			queryString = Regex.Replace(queryString, @"(?<name>\w+)\s!=\snull", "*:* ${name}:[* TO *]");
 			queryString = queryString.Replace(" == ", ":");
@@ -264,13 +231,13 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 		{
 			Type entityType = typeof(T);
 			Boolean exists = false;
-			LuceneMetadata metadata = this.getLuceneMetadata(entityType);
 
 			using (Analyzer analyzer = this.GetAnalyzer(entityType))
 			using (Lucene.Net.Store.Directory directory = this.GetDirectory(entityType, out exists))
-			using (IndexSearcher searcher = new IndexSearcher(directory, true))
-			{				
-				MultiFieldQueryParser queryParser = new MultiFieldQueryParser(luceneVersion, metadata.Fields.Select(x => x.Key.Name).ToArray(), analyzer);
+			using (Searcher searcher = new IndexSearcher(directory, true))
+			{
+				LuceneMetadata metadata = this.getLuceneMetadata(entityType);
+				MultiFieldQueryParser queryParser = new MultiFieldQueryParser(luceneVersion, metadata.Fields.Select(x => x.Key.Name).ToArray(), analyzer, metadata.Fields.ToDictionary(x => x.Key.Name, x => x.Value.Boost));
 				Query query = queryParser.Parse(queryString);
 				TopDocs top = searcher.Search(query, maxResults > 0 ? maxResults : searcher.MaxDoc);
 				ScoreDoc[] score = top.ScoreDocs;
@@ -283,6 +250,7 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 					{
 						PropertyInfo idProperty = idProperties.Single();
 						Type idType = idProperty.PropertyType;
+						ParameterExpression p = Expression.Parameter(entityType, idProperty.Name);
 						IList ids = Activator.CreateInstance(typeof(List<>).MakeGenericType(idType)) as IList;
 
 						for (Int32 i = 0; i < score.Length; ++i)
@@ -292,28 +260,25 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 							ids.Add(id);
 						}
 
-						IQueryable<T> q = base.Set<T>();
-						ParameterExpression p = Expression.Parameter(typeof(T), idProperty.Name);
+						IQueryable<T> q = base.Set<T>();						
 						q = Queryable.Where<T>(q, Expression.Lambda<Func<T, Boolean>>(Expression.Call(Expression.Constant(ids), ids.GetType().GetMethod("Contains"), new Expression[] { Expression.Property(p, idProperty.GetGetMethod()) }), new ParameterExpression[] { p })) as IQueryable<T>;
 
 						if (maxResults > 0)
 						{
-							q = takeMethod.MakeGenericMethod(typeof(T)).Invoke(null, new Object[] { q, maxResults }) as IQueryable<T>;
+							q = takeMethod.MakeGenericMethod(entityType).Invoke(null, new Object[] { q, maxResults }) as IQueryable<T>;
 						}
 
 						return (q);
 					}
 					else
 					{
-						String entityName = typeof(T).Name;
+						String entityName = entityType.Name;
 
 						if (this.PluralizeEntities == true)
 						{
 							entityName = pluralizationService.Pluralize(entityName);
 						}
 
-						ObjectContext octx = (this as IObjectContextAdapter).ObjectContext;
-						
 						StringBuilder esql = new StringBuilder();
 						esql.AppendFormat("SELECT VALUE e FROM {0} AS e WHERE ", entityName);
 
@@ -354,11 +319,13 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 
 						String xxx = esql.ToString();
 
+						ObjectContext octx = (this as IObjectContextAdapter).ObjectContext;
+
 						IQueryable<T> q = octx.CreateQuery<T>(esql.ToString(), parameters.ToArray());
 
 						if (maxResults != 0)
 						{
-							q = takeMethod.MakeGenericMethod(typeof(T)).Invoke(null, new Object[] { q, maxResults }) as IQueryable<T>;
+							q = takeMethod.MakeGenericMethod(entityType).Invoke(null, new Object[] { q, maxResults }) as IQueryable<T>;
 						}
 
 						return (q);
@@ -376,6 +343,37 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 		#endregion
 
 		#region Private methods
+		private void index(Object entity, EntityState state, Boolean destroyExistingIndex = false)
+		{
+			Type entityType = this.getEntityType(entity.GetType());
+
+			switch (state)
+			{
+				case EntityState.Added:
+					this.add(entityType, destroyExistingIndex, entity);
+					break;
+
+				case EntityState.Deleted:
+					this.delete(entityType, destroyExistingIndex, entity);
+					break;
+
+				case EntityState.Modified:
+					this.update(entityType, destroyExistingIndex, entity);
+					break;
+
+				case EntityState.Unchanged:
+					this.add(entityType, destroyExistingIndex, entity);
+					break;
+
+				case EntityState.Detached:
+					this.add(entityType, destroyExistingIndex, entity);
+					break;
+
+				default:
+					throw (new ArgumentException("Invalid state", "state"));
+			}
+		}
+
 		private void validateMetadata(LuceneMetadata metadata)
 		{
 			if (metadata != null)
@@ -433,12 +431,12 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 							Object value = key.Key.GetValue(entity, null);
 
 							if (value != null)
-							{
+							{								
 								Field field = null;
 								
-								if (value is IConvertible)
+								if ((value is IFormattable) && (String.IsNullOrWhiteSpace(key.Value.Format) == false))
 								{
-									field = new Field(key.Key.Name, (value as IConvertible).ToString(CultureInfo.InvariantCulture), Field.Store.YES, Field.Index.NOT_ANALYZED);
+									field = new Field(key.Key.Name, (value as IFormattable).ToString(key.Value.Format, CultureInfo.InvariantCulture), Field.Store.YES, Field.Index.NOT_ANALYZED);
 								}
 								else
 								{
@@ -455,7 +453,8 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 							{
 								NumericFieldAttribute attribute = f.Value as NumericFieldAttribute;
 								Object value = f.Key.GetValue(entity, null);
-								NumericField field = new NumericField(f.Key.Name, attribute.PrecisionStep, this.getStore(f.Value.Store), f.Value.Index != EntityFrameworkLuceneIntegration.Index.No);
+
+								NumericField field = new NumericField(f.Key.Name, attribute.PrecisionStep, this.getStore(f.Value.Store), attribute.Index);
 
 								if ((value is Int32) || (value is Int16) || (value is Byte))
 								{
@@ -473,6 +472,10 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 								{
 									field.SetDoubleValue((Double)value);
 								}
+								else if (value is DateTime)
+								{
+									field.SetLongValue(((DateTime)value).Ticks);
+								}
 								else
 								{
 									throw (new Exception(String.Format("Type {0} is not supported with NumericField", f.Key.PropertyType)));
@@ -483,7 +486,6 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 								field.OmitNorms = f.Value.OmitNorms;
 
 								doc.Add(field);
-
 							}
 							else
 							{
@@ -493,9 +495,9 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 								{
 									Field field = null;
 
-									if (value is IConvertible)
+									if ((value is IFormattable) && (String.IsNullOrWhiteSpace(f.Value.Format) == false))
 									{
-										field = new Field(f.Key.Name, (value as IConvertible).ToString(CultureInfo.InvariantCulture), this.getStore(f.Value.Store), this.getIndex(f.Value.Index), this.getTermVector(f.Value.TermVector));
+										field = new Field(f.Key.Name, (value as IFormattable).ToString(f.Value.Format, CultureInfo.InvariantCulture), this.getStore(f.Value.Store), this.getIndex(f.Value.Index), this.getTermVector(f.Value.TermVector));
 									}
 									else
 									{
@@ -721,7 +723,7 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 				.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
 				.Where(x => x.GetCustomAttributes(typeof(FieldAttribute), false).Any())
 				.Where(x => x.GetCustomAttributes(typeof(FieldAttribute), false).OfType<FieldAttribute>().Any(y => y.Key == false))
-				.ToDictionary(x => x, x => x.GetCustomAttributes(typeof(FieldAttribute), false).OfType<FieldAttribute>().Single()));
+				.ToDictionary(x => x, x => x.GetCustomAttributes(typeof(FieldAttribute), true).OfType<FieldAttribute>().Single()));
 		}
 
 		private IDictionary<PropertyInfo, FieldAttribute> getLuceneIdProperties(Type type)
@@ -730,7 +732,7 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 				.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
 				.Where(x => x.GetCustomAttributes(typeof(FieldAttribute), false).Any())
 				.Where(x => x.GetCustomAttributes(typeof(FieldAttribute), false).OfType<FieldAttribute>().Any(y => y.Key == true))
-				.ToDictionary(x => x, x => x.GetCustomAttributes(typeof(FieldAttribute), false).OfType<FieldAttribute>().Single()));
+				.ToDictionary(x => x, x => x.GetCustomAttributes(typeof(FieldAttribute), true).OfType<FieldAttribute>().Single()));
 		}
 		#endregion
 	}

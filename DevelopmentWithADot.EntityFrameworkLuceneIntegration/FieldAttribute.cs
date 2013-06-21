@@ -17,6 +17,12 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 			this.OmitTermFreqAndPositions = false;
 		}
 
+		public String Format
+		{
+			get;
+			set;
+		}
+
 		public Boolean OmitTermFreqAndPositions
 		{
 			get;

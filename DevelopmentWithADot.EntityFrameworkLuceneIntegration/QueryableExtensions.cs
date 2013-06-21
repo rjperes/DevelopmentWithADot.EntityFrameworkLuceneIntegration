@@ -27,7 +27,7 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 			{
 				foreach (T entity in query.ToList())
 				{
-					context.Index<T>(entity, destroyExistingIndex);
+					context.Index(entity, destroyExistingIndex);
 				}
 			}
 		}
