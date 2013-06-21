@@ -15,13 +15,13 @@ using System.Linq.Expressions;
 using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
-using global::Lucene.Net.Analysis;
-using global::Lucene.Net.Analysis.Standard;
-using global::Lucene.Net.Documents;
-using global::Lucene.Net.Index;
-using global::Lucene.Net.QueryParsers;
-using global::Lucene.Net.Search;
-using global::Lucene.Net.Store;
+using Lucene.Net.Analysis;
+using Lucene.Net.Analysis.Standard;
+using Lucene.Net.Documents;
+using Lucene.Net.Index;
+using Lucene.Net.QueryParsers;
+using Lucene.Net.Search;
+using Lucene.Net.Store;
 
 namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 {
@@ -30,6 +30,7 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 		#region Private static readonly fields
 		private static readonly MethodInfo takeMethod = typeof(Queryable).GetMethod("Take", BindingFlags.Public | BindingFlags.Static);
 		private static readonly PluralizationService pluralizationService = PluralizationService.CreateService(CultureInfo.CreateSpecificCulture("en-US"));
+		private static readonly Lucene.Net.Util.Version luceneVersion = Lucene.Net.Util.Version.LUCENE_30;
 		#endregion
 
 		#region Protected constructors
@@ -67,18 +68,19 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 		{
 			this.Initialize();
 		}
-		#endregion
+		#endregion		
 
 		#region Protected virtual methods
 		protected virtual void Initialize()
 		{
 			this.IndexingEnabled = true;
 			this.PluralizeEntities = true;
+			this.IndexesPath = Path.Combine(Environment.CurrentDirectory, "Indexes");
 		}
 
-		protected virtual global::Lucene.Net.Store.Directory GetDirectory(Type type, out Boolean exists)
+		protected virtual Lucene.Net.Store.Directory GetDirectory(Type type, out Boolean exists)
 		{
-			String path = Path.Combine(Environment.CurrentDirectory, "Indexes", type.Name);
+			String path = Path.Combine(this.IndexesPath, type.Name);
 
 			exists = System.IO.Directory.Exists(path);
 
@@ -87,9 +89,30 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 				System.IO.Directory.CreateDirectory(path);
 			}
 
-			DirectoryInfo dir = new DirectoryInfo(path);
+			return (FSDirectory.Open(path));
+		}
 
-			return (FSDirectory.Open(dir));
+		protected virtual IndexWriter GetIndexWriter(Lucene.Net.Store.Directory directory, Analyzer analyzer, Boolean exists)
+		{
+			return (new IndexWriter(directory, analyzer, !exists, IndexWriter.MaxFieldLength.LIMITED));
+		}
+
+		protected virtual Analyzer GetAnalyzer(Type entityType)
+		{
+			LuceneMetadata metadata = this.getLuceneMetadata(entityType);
+			Analyzer analyzer = null;
+
+			if (LuceneMetadata.Analyzers.TryGetValue(metadata.Document.AnalyzerType, out analyzer) == true)
+			{
+				analyzer = Activator.CreateInstance(metadata.Document.AnalyzerType, new Object[] { luceneVersion }) as Analyzer;
+				LuceneMetadata.Analyzers[metadata.Document.AnalyzerType] = analyzer;
+			}
+			else
+			{
+				analyzer = new StandardAnalyzer(luceneVersion);
+			}
+
+			return (analyzer);
 		}
 		#endregion
 
@@ -101,6 +124,12 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 		}
 
 		public Boolean PluralizeEntities
+		{
+			get;
+			set;
+		}
+
+		public String IndexesPath
 		{
 			get;
 			set;
@@ -210,7 +239,7 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 
 		public void DeleteIndex<T>()
 		{
-			this.destroy(typeof(T), true);
+			this.destroyIfRequired(typeof(T), true);
 		}
 
 		public IQueryable<T> Search<T>(Expression<Func<T, Boolean>> condition, Int32 maxResults = 0) where T : class
@@ -237,11 +266,11 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 			Boolean exists = false;
 			LuceneMetadata metadata = this.getLuceneMetadata(entityType);
 
-			using (Analyzer analyzer = this.getAnalyzer(entityType))
-			using (global::Lucene.Net.Store.Directory directory = this.GetDirectory(entityType, out exists))
+			using (Analyzer analyzer = this.GetAnalyzer(entityType))
+			using (Lucene.Net.Store.Directory directory = this.GetDirectory(entityType, out exists))
 			using (IndexSearcher searcher = new IndexSearcher(directory, true))
 			{				
-				MultiFieldQueryParser queryParser = new MultiFieldQueryParser(global::Lucene.Net.Util.Version.LUCENE_30, metadata.Fields.Select(x => x.Key.Name).ToArray(), analyzer);
+				MultiFieldQueryParser queryParser = new MultiFieldQueryParser(luceneVersion, metadata.Fields.Select(x => x.Key.Name).ToArray(), analyzer);
 				Query query = queryParser.Parse(queryString);
 				TopDocs top = searcher.Search(query, maxResults > 0 ? maxResults : searcher.MaxDoc);
 				ScoreDoc[] score = top.ScoreDocs;
@@ -249,7 +278,7 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 				if (score.Length > 0)
 				{
 					PropertyInfo [] idProperties = metadata.Keys.Select(x => x.Key).ToArray();
-
+					
 					if (idProperties.Length == 1)
 					{
 						PropertyInfo idProperty = idProperties.Single();
@@ -362,7 +391,7 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 			}
 		}
 
-		private void destroy(Type entityType, Boolean destroyExistingIndex)
+		private void destroyIfRequired(Type entityType, Boolean destroyExistingIndex)
 		{
 			if (destroyExistingIndex == true)
 			{
@@ -370,9 +399,9 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 
 				entityType = this.getEntityType(entityType);
 
-				using (Analyzer analyzer = this.getAnalyzer(entityType))
-				using (global::Lucene.Net.Store.Directory directory = this.GetDirectory(entityType, out exists))
-				using (IndexWriter writer = new IndexWriter(directory, analyzer, !exists, IndexWriter.MaxFieldLength.LIMITED))
+				using (Analyzer analyzer = this.GetAnalyzer(entityType))
+				using (Lucene.Net.Store.Directory directory = this.GetDirectory(entityType, out exists))
+				using (IndexWriter writer = this.GetIndexWriter(directory, analyzer, exists))
 				{
 					writer.DeleteAll();
 					writer.Optimize();
@@ -382,7 +411,7 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 
 		private void add(Type entityType, Boolean destroyExistingIndex, params Object [] entities)
 		{
-			this.destroy(entityType, destroyExistingIndex);
+			this.destroyIfRequired(entityType, destroyExistingIndex);
 
 			Boolean exists = false;
 			LuceneMetadata metadata = this.getLuceneMetadata(this.getEntityType(entityType));
@@ -391,67 +420,95 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 			{
 				this.validateMetadata(metadata);
 
-				using (Analyzer analyzer = this.getAnalyzer(entityType))
-				using (global::Lucene.Net.Store.Directory directory = this.GetDirectory(entityType, out exists))
-				using (IndexWriter writer = new IndexWriter(directory, analyzer, !exists, IndexWriter.MaxFieldLength.LIMITED))
+				using (Analyzer analyzer = this.GetAnalyzer(entityType))
+				using (Lucene.Net.Store.Directory directory = this.GetDirectory(entityType, out exists))
+				using (IndexWriter writer = this.GetIndexWriter(directory, analyzer, exists))
 				{
 					foreach (Object entity in entities)
 					{
 						Document doc = new Document();
 
-						foreach (var f in metadata.Keys)
+						foreach (var key in metadata.Keys)
 						{
-							Object value = f.Key.GetValue(entity, null);
+							Object value = key.Key.GetValue(entity, null);
 
 							if (value != null)
 							{
-								Field field = new Field(f.Key.Name, value.ToString(), Field.Store.YES, Field.Index.NOT_ANALYZED);
+								Field field = null;
+								
+								if (value is IConvertible)
+								{
+									field = new Field(key.Key.Name, (value as IConvertible).ToString(CultureInfo.InvariantCulture), Field.Store.YES, Field.Index.NOT_ANALYZED);
+								}
+								else
+								{
+									field = new Field(key.Key.Name, value.ToString(), Field.Store.YES, Field.Index.NOT_ANALYZED);
+								}
+
 								doc.Add(field);
 							}
 						}
 
 						foreach (var f in metadata.Fields)
 						{
-							Object value = f.Key.GetValue(entity, null);
-
-							if (value != null)
+							if (f.Value is NumericFieldAttribute)
 							{
-								Field field = new Field(f.Key.Name, value.ToString(), this.getStore(f.Value.Store), this.getIndex(f.Value.Index));
+								NumericFieldAttribute attribute = f.Value as NumericFieldAttribute;
+								Object value = f.Key.GetValue(entity, null);
+								NumericField field = new NumericField(f.Key.Name, attribute.PrecisionStep, this.getStore(f.Value.Store), f.Value.Index != EntityFrameworkLuceneIntegration.Index.No);
+
+								if ((value is Int32) || (value is Int16) || (value is Byte))
+								{
+									field.SetIntValue(Convert.ToInt32(value));
+								}
+								else if (value is Int64)
+								{
+									field.SetLongValue((Int64)value);
+								}
+								else if (value is Single)
+								{
+									field.SetFloatValue((Single)value);
+								}
+								else if (value is Double)
+								{
+									field.SetDoubleValue((Double)value);
+								}
+								else
+								{
+									throw (new Exception(String.Format("Type {0} is not supported with NumericField", f.Key.PropertyType)));
+								}
+
+								field.OmitTermFreqAndPositions = f.Value.OmitTermFreqAndPositions;
 								field.Boost = f.Value.Boost;
 								field.OmitNorms = f.Value.OmitNorms;
+
 								doc.Add(field);
-							}
-						}
 
-						foreach (var f in metadata.NumericFields)
-						{
-							Object value = f.Key.GetValue(entity, null);
-							NumericField field = new NumericField(f.Key.Name, f.Value.PrecisionStep, this.getStore(f.Value.Store), f.Value.Index);
-
-							if ((value is Int32) || (value is Int16) || (value is Byte))
-							{
-								field.SetIntValue(Convert.ToInt32(value));
-							}
-							else if (value is Int64)
-							{
-								field.SetLongValue((Int64)value);
-							}
-							else if (value is Single)
-							{
-								field.SetFloatValue((Single)value);
-							}
-							else if (value is Double)
-							{
-								field.SetDoubleValue((Double)value);
 							}
 							else
 							{
-								throw (new Exception(String.Format("Type {0} is not supported with NumericField", f.Key.PropertyType)));
-							}
+								Object value = f.Key.GetValue(entity, null);
 
-							field.Boost = f.Value.Boost;
-							field.OmitNorms = f.Value.OmitNorms;
-							doc.Add(field);
+								if (value != null)
+								{
+									Field field = null;
+
+									if (value is IConvertible)
+									{
+										field = new Field(f.Key.Name, (value as IConvertible).ToString(CultureInfo.InvariantCulture), this.getStore(f.Value.Store), this.getIndex(f.Value.Index), this.getTermVector(f.Value.TermVector));
+									}
+									else
+									{
+										field = new Field(f.Key.Name, value.ToString(), this.getStore(f.Value.Store), this.getIndex(f.Value.Index), this.getTermVector(f.Value.TermVector));
+									}
+
+									field.OmitTermFreqAndPositions = f.Value.OmitTermFreqAndPositions;
+									field.Boost = f.Value.Boost;
+									field.OmitNorms = f.Value.OmitNorms;
+
+									doc.Add(field);
+								}
+							}
 						}
 
 						writer.AddDocument(doc);
@@ -468,7 +525,7 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 
 		private void delete(Type entityType, Boolean destroyExistingIndex, params Object[] entities)
 		{
-			this.destroy(entityType, destroyExistingIndex);
+			this.destroyIfRequired(entityType, destroyExistingIndex);
 
 			Boolean exists = false;
 			LuceneMetadata metadata = this.getLuceneMetadata(this.getEntityType(entityType));
@@ -477,9 +534,9 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 			{
 				this.validateMetadata(metadata);
 
-				using (Analyzer analyzer = this.getAnalyzer(entityType))
-				using (global::Lucene.Net.Store.Directory directory = this.GetDirectory(entityType, out exists))
-				using (IndexWriter reader = new IndexWriter(directory, analyzer, !exists, IndexWriter.MaxFieldLength.LIMITED))
+				using (Analyzer analyzer = this.GetAnalyzer(entityType))
+				using (Lucene.Net.Store.Directory directory = this.GetDirectory(entityType, out exists))
+				using (IndexWriter reader = this.GetIndexWriter(directory, analyzer, exists))
 				{
 					List<Query> queries = new List<Query>();
 
@@ -491,8 +548,8 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 
 							if (value != null)
 							{
-								QueryParser queryParser = new QueryParser(global::Lucene.Net.Util.Version.LUCENE_29, f.Key.Name, analyzer);
-								Query query = (value is IFormattable) ? queryParser.Parse(String.Format("{0}:{1}", f.Key.Name, (value as IFormattable).ToString(null, CultureInfo.InvariantCulture))) : queryParser.Parse(String.Format("{0}:{1}", f.Key.Name, value));
+								QueryParser queryParser = new QueryParser(luceneVersion, f.Key.Name, analyzer);
+								Query query = (value is IConvertible) ? queryParser.Parse(String.Format("{0}:{1}", f.Key.Name, (value as IConvertible).ToString(CultureInfo.InvariantCulture))) : queryParser.Parse(String.Format("{0}:{1}", f.Key.Name, value));
 
 								queries.Add(query);
 							}
@@ -511,7 +568,7 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 
 		private void update(Type entityType, Boolean destroyExistingIndex, params Object[] entities)
 		{
-			this.destroy(entityType, destroyExistingIndex);
+			this.destroyIfRequired(entityType, destroyExistingIndex);
 
 			Boolean exists = false;
 			LuceneMetadata metadata = this.getLuceneMetadata(this.getEntityType(entityType));
@@ -520,10 +577,10 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 			{
 				this.validateMetadata(metadata);
 
-				using (Analyzer analyzer = this.getAnalyzer(entityType))
-				using (global::Lucene.Net.Store.Directory directory = this.GetDirectory(entityType, out exists))
+				using (Analyzer analyzer = this.GetAnalyzer(entityType))
+				using (Lucene.Net.Store.Directory directory = this.GetDirectory(entityType, out exists))
 				using (IndexSearcher searcher = new IndexSearcher(directory))
-				using (IndexWriter reader = new IndexWriter(directory, analyzer, false, IndexWriter.MaxFieldLength.LIMITED))
+				using (IndexWriter reader = this.GetIndexWriter(directory, analyzer, true))
 				{
 					Boolean changes = false;
 
@@ -535,8 +592,8 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 
 							if (value != null)
 							{
-								QueryParser queryParser = new QueryParser(global::Lucene.Net.Util.Version.LUCENE_29, f.Key.Name, analyzer);
-								Query query = (value is IFormattable) ? queryParser.Parse(String.Format("{0}:{1}", f.Key.Name, (value as IFormattable).ToString(null, CultureInfo.InvariantCulture))) : queryParser.Parse(String.Format("{0}:{1}", f.Key.Name, value));
+								QueryParser queryParser = new QueryParser(luceneVersion, f.Key.Name, analyzer);
+								Query query = (value is IConvertible) ? queryParser.Parse(String.Format("{0}:{1}", f.Key.Name, (value as IConvertible).ToString(CultureInfo.InvariantCulture))) : queryParser.Parse(String.Format("{0}:{1}", f.Key.Name, value));
 								TopDocs top = searcher.Search(query, 1);
 
 								if (top.TotalHits == 1)
@@ -551,7 +608,7 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 
 										if (currentFieldValue != null)
 										{
-											String currentFieldValueString = (currentFieldValue is IFormattable) ? (currentFieldValue as IFormattable).ToString(null, CultureInfo.InvariantCulture) : currentFieldValue.ToString();
+											String currentFieldValueString = (currentFieldValue is IConvertible) ? (currentFieldValue as IConvertible).ToString(CultureInfo.InvariantCulture) : currentFieldValue.ToString();
 
 											changes |= (currentFieldValueString == storedFieldValueString);
 										}
@@ -572,25 +629,7 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 				}
 			}
 		}
-
-		private Analyzer getAnalyzer(Type entityType)
-		{
-			LuceneMetadata metadata = this.getLuceneMetadata(entityType);
-			Analyzer analyzer = null;
-
-			if (LuceneMetadata.Analyzers.TryGetValue(metadata.Document.AnalyzerType, out analyzer) == true)
-			{
-				analyzer = Activator.CreateInstance(metadata.Document.AnalyzerType, new Object[] { global::Lucene.Net.Util.Version.LUCENE_29 }) as Analyzer;
-				LuceneMetadata.Analyzers[metadata.Document.AnalyzerType] = analyzer;
-			}
-			else
-			{
-				analyzer = new StandardAnalyzer(global::Lucene.Net.Util.Version.LUCENE_29);
-			}
-
-			return (analyzer);
-		}
-
+		
 		private Field.Store getStore(Store store)
 		{
 			switch (store)
@@ -603,6 +642,29 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 			}
 
 			throw (new ArgumentException("Invalid store value", "store"));
+		}
+
+		private Field.TermVector getTermVector(TermVector termVector)
+		{
+			switch (termVector)
+			{
+				case TermVector.No:
+					return(Field.TermVector.NO);
+
+				case TermVector.WithOffsets:
+					return(Field.TermVector.WITH_OFFSETS);
+
+				case TermVector.WithPositions:
+					return(Field.TermVector.WITH_POSITIONS);
+
+				case TermVector.WithPositionsOffsets:
+					return(Field.TermVector.WITH_POSITIONS_OFFSETS);
+
+				case TermVector.Yes:
+					return(Field.TermVector.YES);
+			}
+
+			throw (new ArgumentException("Invalid term vector", "termVector"));
 		}
 
 		private Field.Index getIndex(Index index)
@@ -641,7 +703,7 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 
 			if (LuceneMetadata.Metadata.TryGetValue(type, out metadata) == false)
 			{
-				metadata = new LuceneMetadata(type, this.getLuceneEntity(type), this.getLuceneIdProperties(type), this.getLuceneNonIdProperties(type), this.getLuceneNonIdNumericProperties(type));
+				metadata = new LuceneMetadata(type, this.getLuceneEntity(type), this.getLuceneIdProperties(type), this.getLuceneNonIdProperties(type));
 				LuceneMetadata.Metadata[type] = metadata;
 			}
 
@@ -660,15 +722,6 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 				.Where(x => x.GetCustomAttributes(typeof(FieldAttribute), false).Any())
 				.Where(x => x.GetCustomAttributes(typeof(FieldAttribute), false).OfType<FieldAttribute>().Any(y => y.Key == false))
 				.ToDictionary(x => x, x => x.GetCustomAttributes(typeof(FieldAttribute), false).OfType<FieldAttribute>().Single()));
-		}
-
-		private IDictionary<PropertyInfo, NumericFieldAttribute> getLuceneNonIdNumericProperties(Type type)
-		{
-			return (type
-				.GetProperties(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
-				.Where(x => x.GetCustomAttributes(typeof(NumericFieldAttribute), false).Any())
-				.Where(x => x.GetCustomAttributes(typeof(NumericFieldAttribute), false).OfType<NumericFieldAttribute>().Any(y => y.Key == false))
-				.ToDictionary(x => x, x => x.GetCustomAttributes(typeof(NumericFieldAttribute), false).OfType<NumericFieldAttribute>().Single()));
 		}
 
 		private IDictionary<PropertyInfo, FieldAttribute> getLuceneIdProperties(Type type)

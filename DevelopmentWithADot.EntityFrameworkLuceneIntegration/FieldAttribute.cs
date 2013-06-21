@@ -4,15 +4,29 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 {
 	[Serializable]
 	[AttributeUsage(AttributeTargets.Property, AllowMultiple = false, Inherited = true)]
-	public sealed class FieldAttribute : LuceneAttribute
+	public class FieldAttribute : LuceneAttribute
 	{
 		public FieldAttribute()
 		{
 			this.Index = Index.Analyzed;
 			this.Store = Store.Yes;
 			this.Key = false;
-			this.Boost = 0;
+			this.Boost = 1;
 			this.OmitNorms = false;
+			this.TermVector = TermVector.No;
+			this.OmitTermFreqAndPositions = false;
+		}
+
+		public Boolean OmitTermFreqAndPositions
+		{
+			get;
+			set;
+		}
+
+		public TermVector TermVector
+		{
+			get;
+			set;
 		}
 
 		public Single Boost
@@ -40,12 +54,6 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 		}
 
 		public Boolean OmitNorms
-		{
-			get;
-			set;
-		}
-
-		public Type TokenizerType
 		{
 			get;
 			set;

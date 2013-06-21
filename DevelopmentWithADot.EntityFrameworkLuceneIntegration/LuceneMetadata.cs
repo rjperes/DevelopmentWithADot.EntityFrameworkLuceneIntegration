@@ -10,8 +10,7 @@ using global::Lucene.Net.Analysis.Standard;
 
 namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 {
-	[Serializable]
-	public sealed class LuceneMetadata : IValidatableObject
+	sealed class LuceneMetadata : IValidatableObject
 	{
 		static LuceneMetadata()
 		{
@@ -19,13 +18,12 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 			Analyzers = new ConcurrentDictionary<Type, Analyzer>();
 		}
 
-		public LuceneMetadata(Type type, DocumentAttribute entity, IDictionary<PropertyInfo, FieldAttribute> idProperties, IDictionary<PropertyInfo, FieldAttribute> properties, IDictionary<PropertyInfo, NumericFieldAttribute> numericProperties)
+		public LuceneMetadata(Type type, DocumentAttribute entity, IDictionary<PropertyInfo, FieldAttribute> idProperties, IDictionary<PropertyInfo, FieldAttribute> properties)
 		{
 			this.Type = type;
 			this.Document = entity;
 			this.Keys = idProperties;
 			this.Fields = properties;
-			this.NumericFields = numericProperties;
 		}
 
 		internal static IDictionary<Type, Analyzer> Analyzers
@@ -58,12 +56,6 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 			private set;
 		}
 
-		public IDictionary<PropertyInfo, NumericFieldAttribute> NumericFields
-		{
-			get;
-			private set;
-		}
-
 		public IDictionary<PropertyInfo, FieldAttribute> Keys
 		{
 			get;
@@ -76,7 +68,7 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 
 			if (Metadata.TryGetValue(typeof(TEntity), out metadata) == false)
 			{
-				metadata = new LuceneMetadata(typeof(TEntity), new DocumentAttribute() { AnalyzerType = typeof(StandardAnalyzer) }, new Dictionary<PropertyInfo, FieldAttribute>(), new Dictionary<PropertyInfo, FieldAttribute>(), new Dictionary<PropertyInfo, NumericFieldAttribute>() { });
+				metadata = new LuceneMetadata(typeof(TEntity), new DocumentAttribute() { AnalyzerType = typeof(StandardAnalyzer) }, new Dictionary<PropertyInfo, FieldAttribute>(), new Dictionary<PropertyInfo, FieldAttribute>());
 			}
 
 			return (metadata);
@@ -93,7 +85,7 @@ namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 
 			if (Metadata.TryGetValue(typeof(TEntity), out metadata) == false)
 			{
-				metadata = new LuceneMetadata(typeof(TEntity), new DocumentAttribute() { AnalyzerType = typeof(TAnalyzer) }, new Dictionary<PropertyInfo, FieldAttribute>() { { (idProperty.Body as MemberExpression).Member as PropertyInfo, new FieldAttribute() { Key = true } } }, new Dictionary<PropertyInfo, FieldAttribute>() { }, new Dictionary<PropertyInfo, NumericFieldAttribute>() { });
+				metadata = new LuceneMetadata(typeof(TEntity), new DocumentAttribute() { AnalyzerType = typeof(TAnalyzer) }, new Dictionary<PropertyInfo, FieldAttribute>() { { (idProperty.Body as MemberExpression).Member as PropertyInfo, new FieldAttribute() { Key = true } } }, new Dictionary<PropertyInfo, FieldAttribute>() { });
 			}
 			else
 			{

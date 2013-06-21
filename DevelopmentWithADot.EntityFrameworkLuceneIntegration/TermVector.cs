@@ -3,12 +3,12 @@
 namespace DevelopmentWithADot.EntityFrameworkLuceneIntegration
 {
 	[Serializable]
-	public enum Index
+	public enum TermVector
 	{
 		No = 0,
-		Analyzed = 1,
-		NotAnalyzed = 2,
-		NotAnalyzedNoNorms = 3,
-		AnalyzedNoNorms = 4,
+		Yes = 1,
+		WithPositions = 2,
+		WithOffsets = 3,
+		WithPositionsOffsets = 4,
 	}
 }
